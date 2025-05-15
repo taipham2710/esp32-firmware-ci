@@ -2,7 +2,7 @@
 
 ## Kiến trúc dự án
 
-```
+```plaintext
 esp32-firmware-ci/
 ├── src/                 # Code nguồn chính
 │   └── main.cpp         # Chương trình firmware ESP32 (WiFi, MQTT, OTA)
@@ -44,6 +44,7 @@ pip install platformio
 # Build firmware (tại thư mục gốc)
 pio run
 ```
+
 File firmware tạo ra: `.pio/build/esp32dev/firmware.bin`
 
 ### 2.3. Flash firmware lên ESP32
@@ -55,6 +56,7 @@ pio run -t upload
 ### 2.4. Chỉnh sửa cấu hình
 
 - Sửa các thông tin WiFi, MQTT, OTA server trong `src/main.cpp`:
+
   ```cpp
   const char* ssid = "YOUR_WIFI_SSID";
   const char* password = "YOUR_WIFI_PASSWORD";
@@ -75,7 +77,7 @@ pio run -t upload
 
 **Secrets cần cấu hình trên repo:**
 
-- `FIRMWARE_UPLOAD_URL`: Endpoint upload firmware (ví dụ: https://ota.example.com/upload)
+- `FIRMWARE_UPLOAD_URL`: Endpoint upload firmware (ví dụ: <https://ota.example.com/upload>)
 - `FIRMWARE_UPLOAD_TOKEN`: Token xác thực upload (Bearer Token)
 
 ---
