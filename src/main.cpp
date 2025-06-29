@@ -25,7 +25,17 @@ void setup_wifi() {
 }
 
 void reconnect() {
-    while (!client.connected()) client.connect("ESP32Client");
+    if (!client.connected()) {
+        Serial.println("[MQTT] Attempting to connect to broker...");
+        if (client.connect("ESP32Client")) {
+            Serial.println("[MQTT] Connected to broker!");
+        } else {
+            Serial.print("[MQTT] Failed, rc=");
+            Serial.print(client.state());
+            Serial.println(" will retry later.");
+            delay(5000);
+        }
+    }
 }
 
 bool sendHeartbeatWithRetry(int maxRetry = 3) {
@@ -43,7 +53,13 @@ bool sendHeartbeatWithRetry(int maxRetry = 3) {
             Serial.println("[Heartbeat] Sent successfully!");
             return true;
         }
-        delay(1000); // đợi 1s rồi thử lại
+        delay(1000); // wait before retrying
+        Serial.print("[Heartbeat] Retry "); Serial.print(i + 1); Serial.println(" of "); Serial.print(maxRetry);
+        if (i < maxRetry - 1) {
+            Serial.println("[Heartbeat] Retrying...");
+        } else {
+            Serial.println("[Heartbeat] No more retries left.");
+        }
     }
     Serial.println("[Heartbeat] Failed to send after retries!");
     return false;
@@ -118,7 +134,18 @@ bool checkAndUpdateFirmware() {
 void sendSensorDataHttp(float temp, float humidity, float light, int maxRetry = 3) {
     for (int i = 0; i < maxRetry; ++i) {
         HTTPClient http;
-        http.begin(String(OTA_SERVER) + "/api/sensor"); // Đổi endpoint nếu backend bạn khác
+        http.begin(String(OTA_SERVER) + "/api/sensor"); // change to your actual sensor endpoint
+        if (http.getSize() < 0) {
+            Serial.println("[Sensor] Failed to connect to sensor endpoint!");
+            http.end();
+            return;
+        }
+        Serial.println("[Sensor] Sending sensor data...");
+        Serial.print("[Sensor] Temp: "); Serial.print(temp);
+        Serial.print(", Humidity: "); Serial.print(humidity);
+        Serial.print(", Light: "); Serial.println(light);
+        Serial.print("[Sensor] Attempt: "); Serial.println(i + 1);
+        // Set headers and body
         http.addHeader("Content-Type", "application/json");
         String body = String("{\"device_id\":\"") + DEVICE_ID + "\"," +
                       "\"temp\":" + String(temp, 2) + "," +
@@ -144,16 +171,23 @@ void setup() {
     setup_wifi();
     client.setServer(MQTT_HOST, MQTT_PORT);
 
-    // Rollback OTA: Nếu firmware mới đang ở trạng thái pending verify, chờ 30s rồi đánh dấu valid
+    // Rollback OTA: If new firmware is pending verification, wait for 30s and mark it as valid
+    Serial.println("[OTA] Checking OTA state...");
     esp_ota_img_states_t ota_state;
     if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &ota_state) == ESP_OK) {
         if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
             Serial.println("[OTA] Firmware pending verify, waiting 30s to mark as valid...");
-            delay(30000); // Chờ 30s, có thể thay đổi thời gian này
+            delay(30000); // wait for 30 seconds
+            Serial.println("[OTA] Marking firmware as valid...");
+            // Mark the firmware as valid, preventing rollback
             esp_ota_mark_app_valid_cancel_rollback();
             Serial.println("[OTA] Firmware marked as valid, rollback cancelled.");
         } else if (ota_state == ESP_OTA_IMG_ABORTED) {
-            // Nếu firmware bị rollback, gửi log rollback lên server
+            // Firmware rollback detected
+            Serial.println("[OTA] Firmware rollback detected!");
+            // Send log to server
+            Serial.print("[OTA] Current firmware version: "); Serial.println(FIRMWARE_VERSION);
+            Serial.print("[OTA] Sending rollback log to server...");
             Serial.println("[OTA] Firmware rollback detected, sending log...");
             sendOtaLogWithRetry("rollback", FIRMWARE_VERSION, "Firmware rollback triggered", 0);
             Serial.println("[OTA] Firmware rollback log sent.");
@@ -162,9 +196,11 @@ void setup() {
 }
 
 void loop() {
+    Serial.println("[DEBUG] loop running...");
     if (!client.connected()) reconnect();
     client.loop();
-    // Gửi nhiều loại cảm biến khác nhau (ví dụ: nhiệt độ, độ ẩm, ánh sáng...)
+    // Send a lot of sensor data
+    Serial.println("[Main] Sending sensor data...");
     float temp = 25.0 + (rand() % 1000) / 100.0;
     float humidity = 50.0 + (rand() % 1000) / 100.0;
     float light = 100.0 + (rand() % 1000) / 10.0;
@@ -172,18 +208,18 @@ void loop() {
     snprintf(payload, sizeof(payload), "{\"temp\":%.2f,\"humidity\":%.2f,\"light\":%.2f}", temp, humidity, light);
     client.publish("edge/sensor/data", payload);
     Serial.print("[MQTT] Published: "); Serial.println(payload);
-    sendSensorDataHttp(temp, humidity, light); // Gửi song song qua HTTP
+    sendSensorDataHttp(temp, humidity, light); // send sensor data via HTTP
 
     unsigned long now = millis();
-    if (now - lastHeartbeat > 30000) { // gửi heartbeat mỗi 30s
+    if (now - lastHeartbeat > 30000) { // sending heartbeat every 30s
         Serial.println("[Main] Sending heartbeat...");
         sendHeartbeatWithRetry();
         lastHeartbeat = now;
     }
-    if (now - lastOtaCheck > 60000) { // kiểm tra OTA mỗi 60s
+    if (now - lastOtaCheck > 60000) { // checking OTA update every 60s
         Serial.println("[Main] Checking for OTA update...");
         checkAndUpdateFirmware();
         lastOtaCheck = now;
     }
-    delay(5000);
+    delay(5000); // simulate some delay for the loop
 }
