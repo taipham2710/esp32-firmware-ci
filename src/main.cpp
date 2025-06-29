@@ -11,8 +11,8 @@ PubSubClient client(espClient);
 unsigned long lastHeartbeat = 0;
 unsigned long lastOtaCheck = 0;
 unsigned long lastLog = 0;
-#define LED_RED 16      // Error message (WiFi/OTA fail)
-#define LED_GREEN 17    // Normal operation report
+#define LED_RED 13      // Error message (WiFi/OTA fail) - GPIO 13 is safer
+#define LED_GREEN 14    // Normal operation report - GPIO 14 is safer
 
 unsigned long lastErrorBlink = 0;
 bool errorLedState = false;
