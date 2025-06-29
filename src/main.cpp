@@ -11,14 +11,26 @@ PubSubClient client(espClient);
 unsigned long lastHeartbeat = 0;
 unsigned long lastOtaCheck = 0;
 unsigned long lastLog = 0;
+#define LED_RED 16      // Error message (WiFi/OTA fail)
+#define LED_GREEN 17    // Normal operation report
+
+unsigned long lastErrorBlink = 0;
+bool errorLedState = false;
+bool wifiConnected = false;
+bool otaFailFlag = false;
+bool hasError = false; // Flag to indicate if there is any error
 
 void setup_wifi() {
     Serial.print("Connecting to WiFi...");
+    digitalWrite(LED_GREEN, LOW);
+    wifiConnected = false;
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
     }
+    digitalWrite(LED_GREEN, HIGH); // Turn on green LED when WiFi is connected
+    wifiConnected = true;
     Serial.println("\nWiFi connected!");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
@@ -38,6 +50,15 @@ void reconnect() {
     }
 }
 
+void blinkErrorLed() {
+    unsigned long now = millis();
+    if (now - lastErrorBlink > 2000) { // Blink every 2 seconds
+        errorLedState = !errorLedState;
+        digitalWrite(LED_RED, errorLedState ? HIGH : LOW);
+        lastErrorBlink = now;
+    }
+}
+
 bool sendHeartbeatWithRetry(int maxRetry = 3) {
     for (int i = 0; i < maxRetry; ++i) {
         HTTPClient http;
@@ -53,15 +74,10 @@ bool sendHeartbeatWithRetry(int maxRetry = 3) {
             Serial.println("[Heartbeat] Sent successfully!");
             return true;
         }
-        delay(1000); // wait before retrying
-        Serial.print("[Heartbeat] Retry "); Serial.print(i + 1); Serial.println(" of "); Serial.print(maxRetry);
-        if (i < maxRetry - 1) {
-            Serial.println("[Heartbeat] Retrying...");
-        } else {
-            Serial.println("[Heartbeat] No more retries left.");
-        }
+        delay(1000);
     }
     Serial.println("[Heartbeat] Failed to send after retries!");
+    otaFailFlag = true;
     return false;
 }
 
@@ -107,6 +123,7 @@ bool checkAndUpdateFirmware() {
                 Serial.print("[OTA] New firmware available: "); Serial.println(newVersion);
                 Serial.print("[OTA] Downloading from: "); Serial.println(url);
                 http.end();
+                digitalWrite(LED_RED, LOW); // Turn off red LED before OTA
                 unsigned long t0 = millis();
                 t_httpUpdate_return ret = HTTPUpdate().update(espClient, url.c_str());
                 int latency = millis() - t0;
@@ -118,6 +135,7 @@ bool checkAndUpdateFirmware() {
                 } else {
                     Serial.print("[OTA] Update failed, code: "); Serial.println((int)ret);
                     sendOtaLogWithRetry("update_failed", newVersion.c_str(), "OTA failed", latency);
+                    otaFailFlag = true;
                 }
                 return true;
             } else {
@@ -126,6 +144,7 @@ bool checkAndUpdateFirmware() {
         }
     } else {
         Serial.print("[OTA] Failed to check firmware version, HTTP code: "); Serial.println(httpCode);
+        otaFailFlag = true;
     }
     http.end();
     return false;
@@ -134,18 +153,7 @@ bool checkAndUpdateFirmware() {
 void sendSensorDataHttp(float temp, float humidity, float light, int maxRetry = 3) {
     for (int i = 0; i < maxRetry; ++i) {
         HTTPClient http;
-        http.begin(String(OTA_SERVER) + "/api/sensor"); // change to your actual sensor endpoint
-        if (http.getSize() < 0) {
-            Serial.println("[Sensor] Failed to connect to sensor endpoint!");
-            http.end();
-            return;
-        }
-        Serial.println("[Sensor] Sending sensor data...");
-        Serial.print("[Sensor] Temp: "); Serial.print(temp);
-        Serial.print(", Humidity: "); Serial.print(humidity);
-        Serial.print(", Light: "); Serial.println(light);
-        Serial.print("[Sensor] Attempt: "); Serial.println(i + 1);
-        // Set headers and body
+        http.begin(String(OTA_SERVER) + "/api/sensor");
         http.addHeader("Content-Type", "application/json");
         String body = String("{\"device_id\":\"") + DEVICE_ID + "\"," +
                       "\"temp\":" + String(temp, 2) + "," +
@@ -164,9 +172,14 @@ void sendSensorDataHttp(float temp, float humidity, float light, int maxRetry = 
         delay(1000);
     }
     Serial.println("[Sensor] Failed to send data after retries!");
+    otaFailFlag = true;
 }
 
 void setup() {
+    pinMode(LED_RED, OUTPUT);
+    pinMode(LED_GREEN, OUTPUT);
+    digitalWrite(LED_RED, LOW);
+    digitalWrite(LED_GREEN, LOW);
     Serial.begin(115200);
     setup_wifi();
     client.setServer(MQTT_HOST, MQTT_PORT);
@@ -196,11 +209,35 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("[DEBUG] loop running...");
+    // Kiểm tra WiFi
+    if (WiFi.status() != WL_CONNECTED) {
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_RED, HIGH); // Red LED on when WiFi is not connected
+        Serial.println("[Main] WiFi not connected, retrying...");
+        setup_wifi();
+        wifiConnected = false;
+        hasError = true;
+    } else {
+        digitalWrite(LED_GREEN, HIGH);
+        wifiConnected = true;
+        
+        // Check another error condition: OTA failure
+        if (otaFailFlag) {
+            hasError = true;
+        } else {
+            hasError = false;
+            digitalWrite(LED_RED, LOW); // Turn off red LED if no errors
+        }
+    }
+    
+    // Handle error LED blinking
+    if (hasError && wifiConnected) {
+        // Only blink error LED if WiFi is connected
+        blinkErrorLed();
+    }
+    
     if (!client.connected()) reconnect();
     client.loop();
-    // Send a lot of sensor data
-    Serial.println("[Main] Sending sensor data...");
     float temp = 25.0 + (rand() % 1000) / 100.0;
     float humidity = 50.0 + (rand() % 1000) / 100.0;
     float light = 100.0 + (rand() % 1000) / 10.0;
@@ -208,18 +245,17 @@ void loop() {
     snprintf(payload, sizeof(payload), "{\"temp\":%.2f,\"humidity\":%.2f,\"light\":%.2f}", temp, humidity, light);
     client.publish("edge/sensor/data", payload);
     Serial.print("[MQTT] Published: "); Serial.println(payload);
-    sendSensorDataHttp(temp, humidity, light); // send sensor data via HTTP
-
+    sendSensorDataHttp(temp, humidity, light);
     unsigned long now = millis();
-    if (now - lastHeartbeat > 30000) { // sending heartbeat every 30s
+    if (now - lastHeartbeat > 30000) {
         Serial.println("[Main] Sending heartbeat...");
         sendHeartbeatWithRetry();
         lastHeartbeat = now;
     }
-    if (now - lastOtaCheck > 60000) { // checking OTA update every 60s
+    if (now - lastOtaCheck > 60000) {
         Serial.println("[Main] Checking for OTA update...");
         checkAndUpdateFirmware();
         lastOtaCheck = now;
     }
-    delay(5000); // simulate some delay for the loop
+    delay(5000);
 }
