@@ -22,14 +22,16 @@ bool hasError = false; // Flag to indicate if there is any error
 
 void setup_wifi() {
     Serial.print("Connecting to WiFi...");
-    digitalWrite(LED_GREEN, LOW);
+    digitalWrite(LED_GREEN, LOW);  // Tắt đèn xanh khi đang kết nối
+    digitalWrite(LED_RED, HIGH);   // Bật đèn đỏ khi đang kết nối
     wifiConnected = false;
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
     }
-    digitalWrite(LED_GREEN, HIGH); // Turn on green LED when WiFi is connected
+    digitalWrite(LED_GREEN, HIGH); // Bật đèn xanh khi đã kết nối thành công
+    digitalWrite(LED_RED, LOW);    // Tắt đèn đỏ khi kết nối thành công
     wifiConnected = true;
     Serial.println("\nWiFi connected!");
     Serial.print("IP address: ");
@@ -123,7 +125,8 @@ bool checkAndUpdateFirmware() {
                 Serial.print("[OTA] New firmware available: "); Serial.println(newVersion);
                 Serial.print("[OTA] Downloading from: "); Serial.println(url);
                 http.end();
-                digitalWrite(LED_RED, LOW); // Turn off red LED before OTA
+                digitalWrite(LED_GREEN, LOW); // Tắt đèn xanh trước khi OTA
+                digitalWrite(LED_RED, HIGH);  // Bật đèn đỏ trong quá trình OTA
                 unsigned long t0 = millis();
                 t_httpUpdate_return ret = HTTPUpdate().update(espClient, url.c_str());
                 int latency = millis() - t0;
@@ -136,6 +139,7 @@ bool checkAndUpdateFirmware() {
                     Serial.print("[OTA] Update failed, code: "); Serial.println((int)ret);
                     sendOtaLogWithRetry("update_failed", newVersion.c_str(), "OTA failed", latency);
                     otaFailFlag = true;
+                    // LED sẽ được xử lý trong loop() khi otaFailFlag = true
                 }
                 return true;
             } else {
@@ -145,6 +149,7 @@ bool checkAndUpdateFirmware() {
     } else {
         Serial.print("[OTA] Failed to check firmware version, HTTP code: "); Serial.println(httpCode);
         otaFailFlag = true;
+        // LED sẽ được xử lý trong loop() khi otaFailFlag = true
     }
     http.end();
     return false;
@@ -178,8 +183,8 @@ void sendSensorDataHttp(float temp, float humidity, float light, int maxRetry = 
 void setup() {
     pinMode(LED_RED, OUTPUT);
     pinMode(LED_GREEN, OUTPUT);
-    digitalWrite(LED_RED, LOW);
-    digitalWrite(LED_GREEN, LOW);
+    digitalWrite(LED_RED, LOW);    // Tắt đèn đỏ ban đầu
+    digitalWrite(LED_GREEN, LOW);  // Tắt đèn xanh ban đầu
     Serial.begin(115200);
     setup_wifi();
     client.setServer(MQTT_HOST, MQTT_PORT);
@@ -211,30 +216,28 @@ void setup() {
 void loop() {
     // Kiểm tra WiFi
     if (WiFi.status() != WL_CONNECTED) {
-        digitalWrite(LED_GREEN, LOW);
-        digitalWrite(LED_RED, HIGH); // Red LED on when WiFi is not connected
+        digitalWrite(LED_GREEN, LOW);  // Tắt đèn xanh ngay lập tức
+        digitalWrite(LED_RED, HIGH);   // Bật đèn đỏ ngay lập tức
         Serial.println("[Main] WiFi not connected, retrying...");
         setup_wifi();
         wifiConnected = false;
         hasError = true;
     } else {
-        digitalWrite(LED_GREEN, HIGH);
         wifiConnected = true;
         
         // Check another error condition: OTA failure
         if (otaFailFlag) {
             hasError = true;
+            digitalWrite(LED_GREEN, LOW);  // Tắt đèn xanh khi có lỗi
+            digitalWrite(LED_RED, HIGH);   // Bật đèn đỏ khi có lỗi
         } else {
             hasError = false;
-            digitalWrite(LED_RED, LOW); // Turn off red LED if no errors
+            digitalWrite(LED_GREEN, HIGH); // Bật đèn xanh khi hoạt động bình thường
+            digitalWrite(LED_RED, LOW);    // Tắt đèn đỏ khi không có lỗi
         }
     }
     
-    // Handle error LED blinking
-    if (hasError && wifiConnected) {
-        // Only blink error LED if WiFi is connected
-        blinkErrorLed();
-    }
+    // Không cần blinkErrorLed() nữa vì đèn đỏ sẽ sáng liên tục khi có lỗi
     
     if (!client.connected()) reconnect();
     client.loop();
