@@ -20,18 +20,23 @@ bool wifiConnected = false;
 bool otaFailFlag = false;
 bool hasError = false; // Flag to indicate if there is any error
 
+void addCommonHeaders(HTTPClient &http) {
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+}
+
 void setup_wifi() {
     Serial.print("Connecting to WiFi...");
-    digitalWrite(LED_GREEN, LOW);  // Tắt đèn xanh khi đang kết nối
-    digitalWrite(LED_RED, HIGH);   // Bật đèn đỏ khi đang kết nối
+    digitalWrite(LED_GREEN, LOW);  // Turn off green LED initially
+    digitalWrite(LED_RED, HIGH);   // Turn on red LED to indicate connection attempt
     wifiConnected = false;
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
     }
-    digitalWrite(LED_GREEN, HIGH); // Bật đèn xanh khi đã kết nối thành công
-    digitalWrite(LED_RED, LOW);    // Tắt đèn đỏ khi kết nối thành công
+    digitalWrite(LED_GREEN, HIGH); // Turn on green LED when connected
+    digitalWrite(LED_RED, LOW);    // Turn off red LED when connected
     wifiConnected = true;
     Serial.println("\nWiFi connected!");
     Serial.print("IP address: ");
@@ -65,7 +70,7 @@ bool sendHeartbeatWithRetry(int maxRetry = 3) {
     for (int i = 0; i < maxRetry; ++i) {
         HTTPClient http;
         http.begin(String(OTA_SERVER) + "/api/heartbeat");
-        http.addHeader("Content-Type", "application/json");
+        addCommonHeaders(http);
         String body = String("{\"device_id\":\"") + DEVICE_ID + "\"," +
                       "\"status\":\"online\"," +
                       "\"firmware_version\":\"" + FIRMWARE_VERSION + "\"}";
@@ -87,7 +92,7 @@ bool sendOtaLogWithRetry(const char* status, const char* version, const char* er
     for (int i = 0; i < maxRetry; ++i) {
         HTTPClient http;
         http.begin(String(OTA_SERVER) + "/api/log");
-        http.addHeader("Content-Type", "application/json");
+        addCommonHeaders(http);
         String body = String("{\"device_id\":\"") + DEVICE_ID + "\"," +
                       "\"status\":\"" + status + "\"," +
                       "\"version\":\"" + version + "\"," +
@@ -125,8 +130,8 @@ bool checkAndUpdateFirmware() {
                 Serial.print("[OTA] New firmware available: "); Serial.println(newVersion);
                 Serial.print("[OTA] Downloading from: "); Serial.println(url);
                 http.end();
-                digitalWrite(LED_GREEN, LOW); // Tắt đèn xanh trước khi OTA
-                digitalWrite(LED_RED, HIGH);  // Bật đèn đỏ trong quá trình OTA
+                digitalWrite(LED_GREEN, LOW); // Turn off green LED during OTA
+                digitalWrite(LED_RED, HIGH);  // Turn on red LED during OTA
                 unsigned long t0 = millis();
                 t_httpUpdate_return ret = HTTPUpdate().update(espClient, url.c_str());
                 int latency = millis() - t0;
@@ -139,7 +144,7 @@ bool checkAndUpdateFirmware() {
                     Serial.print("[OTA] Update failed, code: "); Serial.println((int)ret);
                     sendOtaLogWithRetry("update_failed", newVersion.c_str(), "OTA failed", latency);
                     otaFailFlag = true;
-                    // LED sẽ được xử lý trong loop() khi otaFailFlag = true
+                    // LED will be handled in loop() when otaFailFlag = true
                 }
                 return true;
             } else {
@@ -149,7 +154,7 @@ bool checkAndUpdateFirmware() {
     } else {
         Serial.print("[OTA] Failed to check firmware version, HTTP code: "); Serial.println(httpCode);
         otaFailFlag = true;
-        // LED sẽ được xử lý trong loop() khi otaFailFlag = true
+        // LED will be handled in loop() when otaFailFlag = true
     }
     http.end();
     return false;
@@ -159,7 +164,7 @@ void sendSensorDataHttp(float temp, float humidity, float light, int maxRetry = 
     for (int i = 0; i < maxRetry; ++i) {
         HTTPClient http;
         http.begin(String(OTA_SERVER) + "/api/sensor");
-        http.addHeader("Content-Type", "application/json");
+        addCommonHeaders(http);
         String body = String("{\"device_id\":\"") + DEVICE_ID + "\"," +
                       "\"temp\":" + String(temp, 2) + "," +
                       "\"humidity\":" + String(humidity, 2) + "," +
@@ -183,8 +188,8 @@ void sendSensorDataHttp(float temp, float humidity, float light, int maxRetry = 
 void setup() {
     pinMode(LED_RED, OUTPUT);
     pinMode(LED_GREEN, OUTPUT);
-    digitalWrite(LED_RED, LOW);    // Tắt đèn đỏ ban đầu
-    digitalWrite(LED_GREEN, LOW);  // Tắt đèn xanh ban đầu
+    digitalWrite(LED_RED, LOW);    // Turn off red LED initially
+    digitalWrite(LED_GREEN, LOW);  // Turn off green LED initially
     Serial.begin(115200);
     setup_wifi();
     client.setServer(MQTT_HOST, MQTT_PORT);
@@ -214,10 +219,10 @@ void setup() {
 }
 
 void loop() {
-    // Kiểm tra WiFi
+    // Check WiFi connection status
     if (WiFi.status() != WL_CONNECTED) {
-        digitalWrite(LED_GREEN, LOW);  // Tắt đèn xanh ngay lập tức
-        digitalWrite(LED_RED, HIGH);   // Bật đèn đỏ ngay lập tức
+        digitalWrite(LED_GREEN, LOW);  // Turn off green LED when WiFi is not connected
+        digitalWrite(LED_RED, HIGH);   // Turn on red LED when WiFi is not connected
         Serial.println("[Main] WiFi not connected, retrying...");
         setup_wifi();
         wifiConnected = false;
@@ -228,16 +233,14 @@ void loop() {
         // Check another error condition: OTA failure
         if (otaFailFlag) {
             hasError = true;
-            digitalWrite(LED_GREEN, LOW);  // Tắt đèn xanh khi có lỗi
-            digitalWrite(LED_RED, HIGH);   // Bật đèn đỏ khi có lỗi
+            digitalWrite(LED_GREEN, LOW);  // Turn off green LED when there is an error
+            digitalWrite(LED_RED, HIGH);   // Turn on red LED when there is an error
         } else {
             hasError = false;
-            digitalWrite(LED_GREEN, HIGH); // Bật đèn xanh khi hoạt động bình thường
-            digitalWrite(LED_RED, LOW);    // Tắt đèn đỏ khi không có lỗi
+            digitalWrite(LED_GREEN, HIGH); // Turn on green LED when no error
+            digitalWrite(LED_RED, LOW);    // Turn off red LED when no error
         }
     }
-    
-    // Không cần blinkErrorLed() nữa vì đèn đỏ sẽ sáng liên tục khi có lỗi
     
     if (!client.connected()) reconnect();
     client.loop();
