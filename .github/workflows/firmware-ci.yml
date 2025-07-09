@@ -1,0 +1,62 @@
+name: ESP32 Firmware CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-test-scan-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Set up PlatformIO
+        run: |
+          pip install -U platformio
+
+      - name: Build firmware
+        run: |
+          platformio run
+
+      - name: Run tests
+        run: |
+          platformio test
+
+      - name: Find firmware .bin file
+        id: find_bin
+        run: |
+          echo "BIN_PATH=$(find .pio/build -name '*.bin' | head -n1)" >> $GITHUB_OUTPUT
+
+      - name: Scan firmware with Trivy
+        uses: aquasecurity/trivy-action@v0.13.1
+        with:
+          scan-type: 'fs'
+          scan-ref: ${{ steps.find_bin.outputs.BIN_PATH }}
+
+      - name: Upload firmware to webserver
+        env:
+          API_TOKEN: ${{ secrets.FIRMWARE_API_TOKEN }}
+          FIRMWARE_API_URL: ${{ secrets.FIRMWARE_API_URL }}
+        run: |
+          curl -X POST "$FIRMWARE_API_URL/api/firmware/upload" \
+            -H "Authorization: Bearer $API_TOKEN" \
+            -F "firmware=@${{ steps.find_bin.outputs.BIN_PATH }}" \
+            -F "version=$(date +'%Y.%m.%d.%H%M%S')" \
+            -F "device=esp32" \
+            -F "notes=Auto uploaded from GitHub Actions"
+
+      - name: Notify Slack
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow,job,took
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }} 
